@@ -1,5 +1,5 @@
-# Test
+from .display import update
 
 
 def run():
-    pass
+    update()

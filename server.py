@@ -2,6 +2,8 @@ from microdot import Microdot
 from tarfile import TarFile
 from pathlib import Path
 from network import WLAN
+from machine import I2C, Pin
+from ssd1306 import SSD1306_I2C
 import socket
 
 import tarfile
@@ -33,6 +35,9 @@ DIR_ELEMENT = """\
 """
 
 HOST_CONFIG = {"essid": "lhs-robot-tour", "password": "12345678"}
+STATION_CONFIG = [
+    {"ssid": "acciochris", "password": "NablaDotB=0"},
+]
 
 
 @server.post("/update")
@@ -90,13 +95,43 @@ def shutdown(request):
     return {"status": "success"}
 
 
+def _wait_until(callback):
+    for _ in range(100):
+        if callback():
+            break
+        time.sleep_ms(100)
+    else:
+        raise RuntimeError("Connection timed out")
+
+
 def setup():
+    # try station first
+    sta = WLAN(network.STA_IF)
+    sta.active(True)
+    ssids = [info[0].decode() for info in sta.scan()]
+    for known_network in STATION_CONFIG:
+        if known_network["ssid"] in ssids:
+            sta.connect(known_network["ssid"], known_network["password"])
+            _wait_until(sta.isconnected)
+            print(f"Connected to {known_network['ssid']}")
+
+            # show info about network
+            display = SSD1306_I2C(128, 64, I2C(sda=Pin(4), scl=Pin(5)))
+            display.text(known_network["ssid"] + ":", 0, 0, 1)
+            display.text(sta.ifconfig()[0], 0, 8, 1)
+            display.show()
+            return
+
+    # use ap as fallback
+    sta.active(False)
+    del sta
+
     ap = WLAN(network.AP_IF)
     ap.active(True)
     ap.config(**HOST_CONFIG)
 
-    while not ap.active():
-        time.sleep_ms(100)
+    _wait_until(ap.active)
+    print(f"Running as ap {HOST_CONFIG['essid']}")
 
 
 def run():
