@@ -1,9 +1,14 @@
+# Note:
+# To minify, execute `pyminify app.py -o app.min.py --rename-globals --preserve-globals run`
+
 # Micropython
 from machine import I2C, Pin
 import time
+import math
 
 # Sensors
 from mpu9250 import MPU9250
+from mpu6500 import MPU6500, SF_DEG_S
 from vl53l0x import VL53L0X
 
 # Display
@@ -11,7 +16,8 @@ from ssd1306 import SSD1306_I2C
 
 
 I2C_CONFIG = I2C(sda=Pin(4), scl=Pin(5))
-MOTION = MPU9250(I2C_CONFIG)
+MOTION6500 = MPU6500(I2C_CONFIG, gyro_sf=SF_DEG_S)
+MOTION = MPU9250(I2C_CONFIG, MOTION6500)
 # LIDAR = VL53L0X(I2C_CONFIG)
 DISPLAY = SSD1306_I2C(128, 64, I2C_CONFIG)
 
@@ -62,22 +68,45 @@ def calibrate(func):
     offset[0] /= 100
     offset[1] /= 100
     offset[2] /= 100
-    return tuple(offset)
+    return offset
+
+
+def norm(vector):
+    return math.sqrt(sum(x**2 for x in vector))
+
+
+def normalize(vector):
+    length = norm(vector)
+    return [(x / length) for x in vector]
+
+
+def dot(vector1, vector2):
+    return sum((x * y) for x, y in zip(vector1, vector2))
 
 
 def run():
     gravity = calibrate(lambda: MOTION.acceleration)
+    gyro_offset = calibrate(lambda: MOTION.gyro)
+    gravity_unit = normalize(gravity)
     velocity = [integral() for _ in range(3)]
     position = [integral() for _ in range(3)]
+    direction = integral()
 
     k = 0
     ticks = time.ticks_us()
     while True:
         acceleration = with_offset(MOTION.acceleration, gravity)
+        gyro = with_offset(MOTION.gyro, gyro_offset)
         current_ticks = time.ticks_us()
         step = time.ticks_diff(current_ticks, ticks) / 1_000_000
+
+        # integrate acceleration
         for i in range(3):
             position[i](velocity[i](acceleration[i], step), step)
+
+        # calculate and integrate angular velocity
+        omega = dot(gyro, gravity_unit)
+        direction(omega, step)
 
         if k == 20:
             k = 0
@@ -87,14 +116,16 @@ def run():
             DISPLAY.text(
                 "{:.1f} {:.1f} {:.1f}".format(*(pos() for pos in position)), 0, 8, 1
             )
-            DISPLAY.text("Sensor data:", 0, 16, 1)
+            DISPLAY.text("Direction:", 0, 16, 1)
+            DISPLAY.text("{:.1f}".format(direction()), 0, 24, 1)
+            DISPLAY.text("Sensor data:", 0, 32, 1)
             DISPLAY.text(
                 "a {:.1f} {:.1f} {:.1f}".format(*acceleration),
                 0,
-                24,
+                40,
                 1,
             )
-            DISPLAY.text("r {:.1f} {:.1f} {:.1f}".format(*MOTION.gyro), 0, 32, 1)
+            DISPLAY.text("r {:.1f} {:.1f} {:.1f}".format(*MOTION.gyro), 0, 48, 1)
             # DISPLAY.text("m {:.1f} {:.1f} {:.1f}".format(*MOTION.magnetic), 0, 40, 1)
             # DISPLAY.text("dist. = {:.1f}".format(LIDAR.ping()), 0, 48, 1)
 
