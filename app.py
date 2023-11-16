@@ -1,5 +1,5 @@
 # Note:
-# To minify, execute `pyminify app.py -o app.min.py --rename-globals --preserve-globals run`
+# To minify, execute `pyminify app.py -o app.min.py --remove-literal-statements --rename-globals --preserve-globals run`
 
 # Micropython
 from machine import I2C, Pin, PWM
@@ -14,6 +14,7 @@ from vl53l0x import VL53L0X
 # Display
 from ssd1306 import SSD1306_I2C
 
+ACTIONS = "FFLR"
 
 I2C_CONFIG = I2C(sda=Pin(4), scl=Pin(5))
 MOTION6500 = MPU6500(I2C_CONFIG, gyro_sf=SF_DEG_S)
@@ -36,8 +37,16 @@ def integral(offset: float = 0.0, initial: float = 0.0, step: float | None = Non
     last = initial
     default_step = step
 
-    def accumulate(value: float | None = None, step: float | None = None):
+    def accumulate(
+        value: float | None = None, step: float | None = None, reset: bool = False
+    ):
         nonlocal total, last
+
+        # reset if requested
+        if reset:
+            total = offset
+            last = initial
+            return total
 
         # don't change anything if value is not given
         if value is None:
@@ -60,7 +69,7 @@ def integral(offset: float = 0.0, initial: float = 0.0, step: float | None = Non
 
 
 def with_offset(values, offset):
-    return tuple((values[i] - offset[i]) for i in range(3))
+    return [(values[i] - offset[i]) for i in range(3)]
 
 
 def calibrate(func):
@@ -90,6 +99,10 @@ def dot(vector1, vector2):
     return sum((x * y) for x, y in zip(vector1, vector2))
 
 
+def eval_vec(vec):
+    return [ele() for ele in vec]
+
+
 def run_motor(motor1=None, motor2=None):
     if motor1 is not None:
         motor1 = int(motor1)
@@ -109,6 +122,59 @@ def run_motor(motor1=None, motor2=None):
             MOTOR[3].duty(min(-motor2, 1023))
 
 
+def _actions_to_ir(actions):
+    """Returns a generator that yields the next action"""
+
+    i = 0
+    done = False
+    while True:
+        if done:
+            break
+
+        action = actions[i]
+
+        j = 0
+        while actions[i + j] == action:
+            j += 1
+            if (i + j) >= len(actions):
+                done = True
+                break
+
+        if action == "F":
+            yield {"op": "reset"}
+            yield {"op": "transition", "start": 0, "stop": 800, "step": 20}
+            yield {"op": "hold-forward", "value": 800, "distance": j / 2}
+            yield {"op": "transition", "start": 800, "stop": 0, "step": 20}
+
+        i += j
+
+
+def _calc_forward_offset(offset, sensors):
+    """Returns the offset for forward motion (go in a straight line)"""
+    return 0.98 * offset + (0.28 * sensors["direction"] + 0.21 * sensors["omega"])
+
+
+def parse_actions(actions):
+    """Returns a coroutine that executes the actions sequentially"""
+    ir = _actions_to_ir(actions)
+    offset = 0
+    sensors = yield (0, 0)
+    for op in ir:
+        if op["op"] == "transition":
+            for val in range(op["start"], op["stop"], op["step"]):  # type: ignore
+                offset = _calc_forward_offset(offset, sensors)
+                sensors = yield (val - offset, val + offset)
+
+        elif op["op"] == "hold-forward":
+            for _ in range(500):  # FIXME: replace with distance
+                offset = _calc_forward_offset(offset, sensors)
+                sensors = yield (op["value"] - offset, op["value"] + offset)
+
+        elif op["op"] == "reset":
+            offset = 0
+            sensors = yield "reset"
+
+
 def run():
     # set up sensors
     gravity = calibrate(lambda: MOTION.acceleration)
@@ -117,6 +183,8 @@ def run():
     velocity = [integral() for _ in range(3)]
     position = [integral() for _ in range(3)]
     direction = integral()
+    runner = parse_actions(ACTIONS)
+    next(runner)  # initialize coroutine
 
     # set up motors
     for pin in MOTOR:
@@ -124,15 +192,9 @@ def run():
 
     run_motor(0, 0)
     time.sleep(10)
-    # time.sleep(10)
-    # run_motor(800, -800)
-    # time.sleep(3)
-    # run_motor(-800, 800)
-    # time.sleep(3)
-    # run_motor(0, 0)
+
     k = 0
     ticks = time.ticks_us()
-    alpha = 0
     while True:
         acceleration = with_offset(MOTION.acceleration, gravity)
         gyro = with_offset(MOTION.gyro, gyro_offset)
@@ -147,8 +209,31 @@ def run():
         omega = dot(gyro, gravity_unit)
         direction(omega, step)
 
-        if k % 10 == 0:
-            alpha = .85 * alpha + (2 * direction() + 1.5 * omega)
+        sensors = {
+            "gyro": gyro,
+            "omega": omega,
+            "direction": direction(),
+            "acceleration": acceleration,
+            "velocity": eval_vec(velocity),
+            "position": eval_vec(position),
+        }
+
+        try:
+            action = runner.send(sensors)
+        except StopIteration:
+            run_motor(0, 0)
+            break
+
+        if action == "reset":
+            for i in range(3):
+                velocity[i](reset=True)
+                position[i](reset=True)
+            direction(reset=True)
+        else:
+            run_motor(*action)
+
+        if False and k % 10 == 0:
+            alpha = 0.85 * alpha + (2 * direction() + 1.5 * omega)
             run_motor(800 - alpha, 800 + alpha)
             DISPLAY.fill(0)
             DISPLAY.text(str(alpha), 0, 0, 1)
