@@ -14,7 +14,7 @@ from vl53l0x import VL53L0X
 # Display
 from ssd1306 import SSD1306_I2C
 
-ACTIONS = "FFLR"
+ACTIONS = "F"
 
 I2C_CONFIG = I2C(sda=Pin(4), scl=Pin(5))
 MOTION6500 = MPU6500(I2C_CONFIG, gyro_sf=SF_DEG_S)
@@ -72,18 +72,20 @@ def with_offset(values, offset):
     return [(values[i] - offset[i]) for i in range(3)]
 
 
-def calibrate(func):
-    offset = [0.0, 0.0, 0.0]
-    for _ in range(100):
-        x, y, z = func()
-        offset[0] += x
-        offset[1] += y
-        offset[2] += z
+def calibrate(*funcs, n=20):
+    offsets = [[0.0, 0.0, 0.0] for _ in range(len(funcs))]
+    for _ in range(n):
+        for i, func in enumerate(funcs):
+            x, y, z = func()
+            offsets[i][0] += x
+            offsets[i][1] += y
+            offsets[i][2] += z
         time.sleep_ms(10)
-    offset[0] /= 100
-    offset[1] /= 100
-    offset[2] /= 100
-    return offset
+    for offset in offsets:
+        offset[0] /= n
+        offset[1] /= n
+        offset[2] /= n
+    return offsets
 
 
 def norm(vector):
@@ -142,16 +144,19 @@ def _actions_to_ir(actions):
 
         if action == "F":
             yield {"op": "reset"}
-            yield {"op": "transition", "start": 0, "stop": 800, "step": 20}
-            yield {"op": "hold-forward", "value": 800, "distance": j / 2}
-            yield {"op": "transition", "start": 800, "stop": 0, "step": 20}
+            yield {"op": "transition", "start": 300, "stop": 600, "step": 15}
+            yield {"op": "hold-forward", "value": 600, "distance": j / 2}
+            yield {"op": "stop"}
+        elif action == "T":
+            yield {"op": "reset"}
+            yield {"op": "hold-forward", "value": 300, "distance": 1}
 
         i += j
 
 
 def _calc_forward_offset(offset, sensors):
     """Returns the offset for forward motion (go in a straight line)"""
-    return 0.98 * offset + (0.28 * sensors["direction"] + 0.21 * sensors["omega"])
+    return 0.98 * offset + (0.35 * sensors["direction"] + 0.25 * sensors["omega"])
 
 
 def parse_actions(actions):
@@ -166,19 +171,32 @@ def parse_actions(actions):
                 sensors = yield (val - offset, val + offset)
 
         elif op["op"] == "hold-forward":
-            for _ in range(500):  # FIXME: replace with distance
+            while True:
+                current_pos = norm(sensors["position"])
+                dist_to_go = op["distance"] - current_pos  # type: ignore
+                if dist_to_go <= 0:
+                    break
+
+                val = 350 + 7500 * dist_to_go**2
+                val = min(val, op["value"])
                 offset = _calc_forward_offset(offset, sensors)
-                sensors = yield (op["value"] - offset, op["value"] + offset)
+
+                sensors = yield (val - offset, val + offset)
 
         elif op["op"] == "reset":
             offset = 0
             sensors = yield "reset"
 
+        elif op["op"] == "stop":
+            sensors = yield (0, 0)
+
 
 def run():
     # set up sensors
-    gravity = calibrate(lambda: MOTION.acceleration)
-    gyro_offset = calibrate(lambda: MOTION.gyro)
+    gravity, gyro_offset = calibrate(
+        lambda: MOTION.acceleration,
+        lambda: MOTION.gyro,
+    )
     gravity_unit = normalize(gravity)
     velocity = [integral() for _ in range(3)]
     position = [integral() for _ in range(3)]
@@ -225,6 +243,14 @@ def run():
             break
 
         if action == "reset":
+            # calibrate sensors
+            gravity, gyro_offset = calibrate(
+                lambda: MOTION.acceleration,
+                lambda: MOTION.gyro,
+            )
+            gravity_unit = normalize(gravity)
+
+            # reset integrals
             for i in range(3):
                 velocity[i](reset=True)
                 position[i](reset=True)
