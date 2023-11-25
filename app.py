@@ -14,12 +14,12 @@ from vl53l0x import VL53L0X
 # Display
 from ssd1306 import SSD1306_I2C
 
-ACTIONS = "F"
+ACTIONS = "L"
 
 I2C_CONFIG = I2C(sda=Pin(4), scl=Pin(5))
 MOTION6500 = MPU6500(I2C_CONFIG, gyro_sf=SF_DEG_S)
 MOTION = MPU9250(I2C_CONFIG, MOTION6500)
-# LIDAR = VL53L0X(I2C_CONFIG)
+LIDAR = VL53L0X(I2C_CONFIG)
 DISPLAY = SSD1306_I2C(128, 64, I2C_CONFIG)
 MOTOR = [
     PWM(Pin(0)),
@@ -150,6 +150,16 @@ def _actions_to_ir(actions):
         elif action == "T":
             yield {"op": "reset"}
             yield {"op": "hold-forward", "value": 300, "distance": 1}
+        elif action == "L":
+            yield {"op": "reset"}
+            yield {"op": "hold-turn", "direction": "ccw", "value": 600, "angle": 90 * j}
+            yield {"op": "stop"}
+        elif action == "R":
+            yield {"op": "reset"}
+            yield {"op": "hold-turn", "direction": "cw", "value": 600, "angle": 90 * j}
+            yield {"op": "stop"}
+        else:
+            raise ValueError("Invalid action")
 
         i += j
 
@@ -171,7 +181,7 @@ def parse_actions(actions):
                 sensors = yield (val - offset, val + offset)
 
         elif op["op"] == "hold-forward":
-            while True:
+            for _ in range(500):  # timeout after 5 seconds
                 current_pos = norm(sensors["position"])
                 dist_to_go = op["distance"] - current_pos  # type: ignore
                 if dist_to_go <= 0:
@@ -182,6 +192,24 @@ def parse_actions(actions):
                 offset = _calc_forward_offset(offset, sensors)
 
                 sensors = yield (val - offset, val + offset)
+
+        elif op["op"] == "hold-turn":
+            for _ in range(500):  # timeout after 5 seconds
+                current_dir = abs(sensors["direction"])
+                angle_to_go = op["angle"] - current_dir
+                DISPLAY.fill(0)
+                DISPLAY.text(str(angle_to_go), 0, 0, 1)
+                DISPLAY.show()
+                if angle_to_go <= 0:
+                    break
+
+                val = 350 + 0.25 * angle_to_go**2
+                val = min(val, op["value"])
+
+                if op["direction"] == "ccw":
+                    sensors = yield (val, -val)  # type: ignore
+                elif op["direction"] == "cw":
+                    sensors = yield (-val, val)  # type: ignore
 
         elif op["op"] == "reset":
             offset = 0
@@ -239,8 +267,7 @@ def run():
         try:
             action = runner.send(sensors)
         except StopIteration:
-            run_motor(0, 0)
-            break
+            action = (0, 0)
 
         if action == "reset":
             # calibrate sensors
@@ -256,6 +283,7 @@ def run():
                 position[i](reset=True)
             direction(reset=True)
         else:
+            print(*action)
             run_motor(*action)
 
         if False and k % 10 == 0:
@@ -266,7 +294,7 @@ def run():
             DISPLAY.show()
             # print(alpha)
 
-        if False:
+        if k % 20 == 0 and False:
             # print(step)
             DISPLAY.fill(0)
             DISPLAY.text("Position:", 0, 0, 1)
@@ -286,6 +314,11 @@ def run():
             # DISPLAY.text("m {:.1f} {:.1f} {:.1f}".format(*MOTION.magnetic), 0, 40, 1)
             # DISPLAY.text("dist. = {:.1f}".format(LIDAR.ping()), 0, 48, 1)
 
+            DISPLAY.show()
+
+        if k % 20 == 0 and False:
+            DISPLAY.fill(0)
+            DISPLAY.text(str(LIDAR.ping()), 0, 0, 1)
             DISPLAY.show()
 
         k += 1
