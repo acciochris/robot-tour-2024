@@ -8,19 +8,42 @@ import math
 
 # Sensors
 from mpu9250 import MPU9250
-from mpu6500 import MPU6500, SF_DEG_S
-from vl53l0x import VL53L0X
+
+# from vl53l0x import VL53L0X
 
 # Display
 from ssd1306 import SSD1306_I2C
 
-ACTIONS = "L"
+
+ACTIONS = "FFL"
+
+DEG_TO_RAD = math.pi / 180
 
 I2C_CONFIG = I2C(sda=Pin(4), scl=Pin(5))
-MOTION6500 = MPU6500(I2C_CONFIG, gyro_sf=SF_DEG_S)
-MOTION = MPU9250(I2C_CONFIG, MOTION6500)
-LIDAR = VL53L0X(I2C_CONFIG)
 DISPLAY = SSD1306_I2C(128, 64, I2C_CONFIG)
+
+
+def show_message(msg: str):
+    DISPLAY.fill(0)
+    DISPLAY.text(msg, 0, 0, 1)
+    DISPLAY.show()
+
+
+show_message("Initializing...")
+try:
+    MOTION = MPU9250(I2C_CONFIG)
+except Exception:
+    show_message("MPU9250")
+    raise
+# try:
+#     LIDAR = VL53L0X(I2C_CONFIG)
+# except Exception:
+#     show_message("LIDAR")
+#     raise
+
+
+# LIDAR = VL53L0X(I2C_CONFIG)
+
 MOTOR = [
     PWM(Pin(0)),
     PWM(Pin(2)),
@@ -144,19 +167,38 @@ def _actions_to_ir(actions):
 
         if action == "F":
             yield {"op": "reset"}
-            yield {"op": "transition", "start": 300, "stop": 600, "step": 15}
-            yield {"op": "hold-forward", "value": 600, "distance": j / 2}
+            yield {"op": "transition", "start": 300, "stop": 800, "step": 15}
+            yield {"op": "forward", "value": 800, "distance": j / 2, "smooth": True}
             yield {"op": "stop"}
         elif action == "T":
             yield {"op": "reset"}
-            yield {"op": "hold-forward", "value": 300, "distance": 1}
+            yield {"op": "forward", "value": 300, "distance": 1}
         elif action == "L":
             yield {"op": "reset"}
-            yield {"op": "hold-turn", "direction": "ccw", "value": 600, "angle": 90 * j}
+            yield {
+                "op": "turn",
+                "direction": "ccw",
+                "value": 800,
+                "angle": 10 * j,
+            }  # get the turn started
+            yield {
+                "op": "turn",
+                "direction": "ccw",
+                "value": 600,
+                "angle": 90 * j,
+                "smooth": True,
+            }  # turn the rest of the way
             yield {"op": "stop"}
         elif action == "R":
             yield {"op": "reset"}
-            yield {"op": "hold-turn", "direction": "cw", "value": 600, "angle": 90 * j}
+            yield {"op": "turn", "direction": "cw", "value": 800, "angle": 10 * j}
+            yield {
+                "op": "turn",
+                "direction": "cw",
+                "value": 600,
+                "angle": 90 * j,
+                "smooth": True,
+            }
             yield {"op": "stop"}
         else:
             raise ValueError("Invalid action")
@@ -166,7 +208,7 @@ def _actions_to_ir(actions):
 
 def _calc_forward_offset(offset, sensors):
     """Returns the offset for forward motion (go in a straight line)"""
-    return 0.98 * offset + (0.35 * sensors["direction"] + 0.25 * sensors["omega"])
+    return 0.98 * offset + (20 * sensors["direction"] + 20 * sensors["omega"])
 
 
 def parse_actions(actions):
@@ -178,38 +220,41 @@ def parse_actions(actions):
         if op["op"] == "transition":
             for val in range(op["start"], op["stop"], op["step"]):  # type: ignore
                 offset = _calc_forward_offset(offset, sensors)
-                sensors = yield (val - offset, val + offset)
+                sensors = yield (val - offset - 50, val + offset + 50)  # global offset
 
-        elif op["op"] == "hold-forward":
+        elif op["op"] == "forward":
             for _ in range(500):  # timeout after 5 seconds
                 current_pos = norm(sensors["position"])
                 dist_to_go = op["distance"] - current_pos  # type: ignore
                 if dist_to_go <= 0:
                     break
 
-                val = 350 + 7500 * dist_to_go**2
-                val = min(val, op["value"])
+                if op.get("smooth", False):
+                    val = 300 + 7500 * dist_to_go**2
+                    val = min(val, op["value"])
+                else:
+                    val = op["value"]
+
                 offset = _calc_forward_offset(offset, sensors)
+                sensors = yield (val - offset - 50, val + offset + 50)  # global offset
 
-                sensors = yield (val - offset, val + offset)
-
-        elif op["op"] == "hold-turn":
+        elif op["op"] == "turn":
             for _ in range(500):  # timeout after 5 seconds
                 current_dir = abs(sensors["direction"])
-                angle_to_go = op["angle"] - current_dir
-                DISPLAY.fill(0)
-                DISPLAY.text(str(angle_to_go), 0, 0, 1)
-                DISPLAY.show()
+                angle_to_go = op["angle"] * DEG_TO_RAD - current_dir  # type: ignore
                 if angle_to_go <= 0:
                     break
 
-                val = 350 + 0.25 * angle_to_go**2
-                val = min(val, op["value"])
+                if op.get("smooth", False):
+                    val = 300 + 600 * angle_to_go**2
+                    val = min(val, op["value"])
+                else:
+                    val = op["value"]
 
                 if op["direction"] == "ccw":
-                    sensors = yield (val, -val)  # type: ignore
+                    sensors = yield (val - 50, -val + 50)  # type: ignore  # global offset
                 elif op["direction"] == "cw":
-                    sensors = yield (-val, val)  # type: ignore
+                    sensors = yield (-val - 50, val + 50)  # type: ignore  # global offset
 
         elif op["op"] == "reset":
             offset = 0
@@ -220,7 +265,6 @@ def parse_actions(actions):
 
 
 def run():
-    # set up sensors
     gravity, gyro_offset = calibrate(
         lambda: MOTION.acceleration,
         lambda: MOTION.gyro,
@@ -237,6 +281,7 @@ def run():
         pin.freq(1000)
 
     run_motor(0, 0)
+    show_message("Motor")
     time.sleep(10)
 
     k = 0
