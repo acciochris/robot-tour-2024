@@ -15,7 +15,7 @@ from mpu9250 import MPU9250
 from ssd1306 import SSD1306_I2C
 
 
-ACTIONS = "FFL"
+ACTIONS = "FLFRF"
 
 DEG_TO_RAD = math.pi / 180
 
@@ -130,7 +130,7 @@ def eval_vec(vec):
 
 def run_motor(motor1=None, motor2=None):
     if motor1 is not None:
-        motor1 = int(motor1)
+        motor1 = int(motor1 * .95)
         if motor1 >= 0:
             MOTOR[0].duty(min(motor1, 1023))
             MOTOR[1].duty(0)
@@ -138,7 +138,7 @@ def run_motor(motor1=None, motor2=None):
             MOTOR[0].duty(0)
             MOTOR[1].duty(min(-motor1, 1023))
     if motor2 is not None:
-        motor2 = int(motor2)
+        motor2 = int(motor2 * 1.15)
         if motor2 >= 0:
             MOTOR[2].duty(min(motor2, 1023))
             MOTOR[3].duty(0)
@@ -220,7 +220,7 @@ def parse_actions(actions):
         if op["op"] == "transition":
             for val in range(op["start"], op["stop"], op["step"]):  # type: ignore
                 offset = _calc_forward_offset(offset, sensors)
-                sensors = yield (val - offset - 50, val + offset + 50)  # global offset
+                sensors = yield (val - offset, val + offset)
 
         elif op["op"] == "forward":
             for _ in range(500):  # timeout after 5 seconds
@@ -236,7 +236,7 @@ def parse_actions(actions):
                     val = op["value"]
 
                 offset = _calc_forward_offset(offset, sensors)
-                sensors = yield (val - offset - 50, val + offset + 50)  # global offset
+                sensors = yield (val - offset, val + offset)
 
         elif op["op"] == "turn":
             for _ in range(500):  # timeout after 5 seconds
@@ -252,9 +252,9 @@ def parse_actions(actions):
                     val = op["value"]
 
                 if op["direction"] == "ccw":
-                    sensors = yield (val - 50, -val + 50)  # type: ignore  # global offset
+                    sensors = yield (val, -val)  # type: ignore
                 elif op["direction"] == "cw":
-                    sensors = yield (-val - 50, val + 50)  # type: ignore  # global offset
+                    sensors = yield (-val, val)  # type: ignore
 
         elif op["op"] == "reset":
             offset = 0
@@ -316,6 +316,7 @@ def run():
 
         if action == "reset":
             # calibrate sensors
+            time.sleep_ms(500)
             gravity, gyro_offset = calibrate(
                 lambda: MOTION.acceleration,
                 lambda: MOTION.gyro,
