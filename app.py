@@ -246,7 +246,7 @@ def parse_actions(actions):
                     break
 
                 if op.get("smooth", False):
-                    val = 300 + 600 * angle_to_go**2
+                    val = 350 + 600 * angle_to_go**2
                     val = min(val, op["value"])
                 else:
                     val = op["value"]
