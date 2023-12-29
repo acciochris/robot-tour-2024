@@ -252,9 +252,14 @@ def parse_actions(actions):
                 sensors = yield (val - offset, val + offset)
 
         elif op["op"] == "turn":
+            lidar_coef = -1 if op["direction"] == "ccw" else 1
             for _ in range(500):  # timeout after 5 seconds
                 current_dir = abs(sensors["direction"])
                 angle_to_go = op["angle"] * DEG_TO_RAD - current_dir  # type: ignore
+
+                if sensors["lidar"] <= 350 and angle_to_go <= math.pi / 6:  # start using lidar when close to target
+                    angle_to_go = _calc_angle_lidar(sensors) * lidar_coef
+
                 if angle_to_go <= 0:
                     break
 
