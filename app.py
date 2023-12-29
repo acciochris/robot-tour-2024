@@ -8,8 +8,7 @@ import math
 
 # Sensors
 from mpu9250 import MPU9250
-
-# from vl53l0x import VL53L0X
+from vl53l0x import VL53L0X
 
 # Display
 from ssd1306 import SSD1306_I2C
@@ -35,11 +34,11 @@ try:
 except Exception:
     show_message("MPU9250")
     raise
-# try:
-#     LIDAR = VL53L0X(I2C_CONFIG)
-# except Exception:
-#     show_message("LIDAR")
-#     raise
+try:
+    LIDAR = VL53L0X(I2C_CONFIG)
+except Exception:
+    show_message("LIDAR")
+    raise
 
 
 # LIDAR = VL53L0X(I2C_CONFIG)
@@ -130,7 +129,7 @@ def eval_vec(vec):
 
 def run_motor(motor1=None, motor2=None):
     if motor1 is not None:
-        motor1 = int(motor1 * .95)
+        motor1 = int(motor1)
         if motor1 >= 0:
             MOTOR[0].duty(min(motor1, 1023))
             MOTOR[1].duty(0)
@@ -138,7 +137,7 @@ def run_motor(motor1=None, motor2=None):
             MOTOR[0].duty(0)
             MOTOR[1].duty(min(-motor1, 1023))
     if motor2 is not None:
-        motor2 = int(motor2 * 1.15)
+        motor2 = int(motor2)
         if motor2 >= 0:
             MOTOR[2].duty(min(motor2, 1023))
             MOTOR[3].duty(0)
@@ -209,6 +208,20 @@ def _actions_to_ir(actions):
 def _calc_forward_offset(offset, sensors):
     """Returns the offset for forward motion (go in a straight line)"""
     return 0.98 * offset + (20 * sensors["direction"] + 20 * sensors["omega"])
+
+
+def _calc_angle_lidar(sensors):
+    r"""Returns the angle to the nearest obstacle
+
+    $$
+    \theta = \arctan\left(\frac{\frac{dL}{d\theta} - x}{L + y}\right)
+    $$
+    """
+
+    dLdtheta = (
+        sensors["dL/dt"] / sensors["omega"]
+    )  # dL/dtheta = (dL/dt) / (dtheta/dt) (in mm)
+    return math.atan((dLdtheta - 56) / (sensors["lidar"] + 120))
 
 
 def parse_actions(actions):
@@ -285,10 +298,14 @@ def run():
     time.sleep(10)
 
     k = 0
+    dLdt = 0
+    last_lidar = LIDAR.ping()
     ticks = time.ticks_us()
+    last_lidar_ticks = ticks
     while True:
         acceleration = with_offset(MOTION.acceleration, gravity)
         gyro = with_offset(MOTION.gyro, gyro_offset)
+        lidar = LIDAR.ping()
         current_ticks = time.ticks_us()
         step = time.ticks_diff(current_ticks, ticks) / 1_000_000
 
@@ -300,6 +317,14 @@ def run():
         omega = dot(gyro, gravity_unit)
         direction(omega, step)
 
+        # dL/dt
+        if k % 10 == 9:  # reduce frequency to avoid the effect of noise
+            dLdt = (lidar - last_lidar) / (
+                time.ticks_diff(current_ticks, last_lidar_ticks) / 1_000_000
+            )
+            last_lidar = lidar
+            last_lidar_ticks = current_ticks
+
         sensors = {
             "gyro": gyro,
             "omega": omega,
@@ -307,6 +332,8 @@ def run():
             "acceleration": acceleration,
             "velocity": eval_vec(velocity),
             "position": eval_vec(position),
+            "lidar": lidar,
+            "dL/dt": dLdt,
         }
 
         try:
@@ -330,7 +357,7 @@ def run():
             direction(reset=True)
         else:
             print(*action)
-            run_motor(*action)
+            # run_motor(*action)
 
         if False and k % 10 == 0:
             alpha = 0.85 * alpha + (2 * direction() + 1.5 * omega)
@@ -362,9 +389,11 @@ def run():
 
             DISPLAY.show()
 
-        if k % 20 == 0 and False:
+        if k % 20 == 0:
             DISPLAY.fill(0)
-            DISPLAY.text(str(LIDAR.ping()), 0, 0, 1)
+            DISPLAY.text(str(lidar), 0, 0, 1)
+            DISPLAY.text(str(int(sensors["direction"] / DEG_TO_RAD)), 0, 8, 1)
+            DISPLAY.text(str(int(_calc_angle_lidar(sensors) / DEG_TO_RAD)), 0, 16, 1)
             DISPLAY.show()
 
         k += 1
