@@ -14,7 +14,7 @@ from vl53l0x import VL53L0X
 from ssd1306 import SSD1306_I2C
 
 
-ACTIONS = "FLFRF"
+ACTIONS = "FFFRFFLFFFFLFFFFFF"
 
 DEG_TO_RAD = math.pi / 180
 
@@ -239,6 +239,10 @@ def parse_actions(actions):
             for _ in range(500):  # timeout after 5 seconds
                 current_pos = norm(sensors["position"])
                 dist_to_go = op["distance"] - current_pos  # type: ignore
+
+                if sensors["lidar"] <= 500:
+                    dist_to_go = min(dist_to_go, sensors["lidar"] - 150)
+
                 if dist_to_go <= 0:
                     break
 
@@ -252,13 +256,9 @@ def parse_actions(actions):
                 sensors = yield (val - offset, val + offset)
 
         elif op["op"] == "turn":
-            lidar_coef = -1 if op["direction"] == "ccw" else 1
             for _ in range(500):  # timeout after 5 seconds
                 current_dir = abs(sensors["direction"])
                 angle_to_go = op["angle"] * DEG_TO_RAD - current_dir  # type: ignore
-
-                if sensors["lidar"] <= 350 and angle_to_go <= math.pi / 6:  # start using lidar when close to target
-                    angle_to_go = _calc_angle_lidar(sensors) * lidar_coef
 
                 if angle_to_go <= 0:
                     break
@@ -362,7 +362,7 @@ def run():
             direction(reset=True)
         else:
             print(*action)
-            # run_motor(*action)
+            run_motor(*action)
 
         if False and k % 10 == 0:
             alpha = 0.85 * alpha + (2 * direction() + 1.5 * omega)
