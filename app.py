@@ -167,7 +167,7 @@ def _actions_to_ir(actions):
         if action == "F":
             yield {"op": "reset"}
             yield {"op": "transition", "start": 300, "stop": 800, "step": 15}
-            yield {"op": "forward", "value": 800, "distance": j / 2, "smooth": True}
+            yield {"op": "forward", "value": 800, "distance": j / 4, "smooth": True}
             yield {"op": "stop"}
         elif action == "T":
             yield {"op": "reset"}
