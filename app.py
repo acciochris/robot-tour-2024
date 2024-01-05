@@ -300,8 +300,19 @@ def run():
 
     run_motor(0, 0)
     show_message("Motor")
-    time.sleep(10)
+    while True:
+        lidar = LIDAR.ping()
+        show_message(str(lidar))
 
+        if lidar < 40:
+            break
+        time.sleep_ms(500)
+
+    for m in range(3, 0, -1):  # countdown
+        show_message(str(m))
+        time.sleep(1)
+
+    show_message("Running...")
     k = 0
     dLdt = 0
     last_lidar = LIDAR.ping()
@@ -344,6 +355,7 @@ def run():
         try:
             action = runner.send(sensors)
         except StopIteration:
+            show_message("Done!")
             action = (0, 0)
 
         if action == "reset":
