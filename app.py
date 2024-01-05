@@ -14,7 +14,7 @@ from vl53l0x import VL53L0X
 from ssd1306 import SSD1306_I2C
 
 
-ACTIONS = "FFFRFFLFFFFLFFFFFF"
+ACTIONS = "FRFFRRRFFRFFRRRFFRRRFFRFFRRFFRFFRRRFFRFFRRFFRRRFFRRRFFRFFRFF"
 
 DEG_TO_RAD = math.pi / 180
 
@@ -94,7 +94,7 @@ def with_offset(values, offset):
     return [(values[i] - offset[i]) for i in range(3)]
 
 
-def calibrate(*funcs, n=20):
+def calibrate(*funcs, n=50):
     offsets = [[0.0, 0.0, 0.0] for _ in range(len(funcs))]
     for _ in range(n):
         for i, func in enumerate(funcs):
@@ -102,7 +102,7 @@ def calibrate(*funcs, n=20):
             offsets[i][0] += x
             offsets[i][1] += y
             offsets[i][2] += z
-        time.sleep_ms(10)
+        time.sleep_ms(20)
     for offset in offsets:
         offset[0] /= n
         offset[1] /= n
@@ -166,8 +166,8 @@ def _actions_to_ir(actions):
 
         if action == "F":
             yield {"op": "reset"}
-            yield {"op": "transition", "start": 300, "stop": 800, "step": 15}
-            yield {"op": "forward", "value": 800, "distance": j / 4, "smooth": True}
+            yield {"op": "transition", "start": 500, "stop": 800, "step": 15}
+            yield {"op": "forward", "value": 800, "distance": j * 0.24, "smooth": True}
             yield {"op": "stop"}
         elif action == "T":
             yield {"op": "reset"}
@@ -207,21 +207,7 @@ def _actions_to_ir(actions):
 
 def _calc_forward_offset(offset, sensors):
     """Returns the offset for forward motion (go in a straight line)"""
-    return 0.98 * offset + (20 * sensors["direction"] + 20 * sensors["omega"])
-
-
-def _calc_angle_lidar(sensors):
-    r"""Returns the angle to the nearest obstacle
-
-    $$
-    \theta = \arctan\left(\frac{\frac{dL}{d\theta} - x}{L + y}\right)
-    $$
-    """
-
-    dLdtheta = (
-        sensors["dL/dt"] / sensors["omega"]
-    )  # dL/dtheta = (dL/dt) / (dtheta/dt) (in mm)
-    return math.atan((dLdtheta - 56) / (sensors["lidar"] + 120))
+    return 0.85 * offset + (150 * sensors["direction"] + 150 * sensors["omega"])
 
 
 def parse_actions(actions):
@@ -241,13 +227,13 @@ def parse_actions(actions):
                 dist_to_go = op["distance"] - current_pos  # type: ignore
 
                 if sensors["lidar"] <= 500:
-                    dist_to_go = min(dist_to_go, sensors["lidar"] - 150)
+                    dist_to_go = min(dist_to_go, sensors["lidar"] - 250)
 
                 if dist_to_go <= 0:
                     break
 
                 if op.get("smooth", False):
-                    val = 300 + 7500 * dist_to_go**2
+                    val = 500 + 7500 * dist_to_go**2
                     val = min(val, op["value"])
                 else:
                     val = op["value"]
@@ -257,14 +243,15 @@ def parse_actions(actions):
 
         elif op["op"] == "turn":
             for _ in range(500):  # timeout after 5 seconds
+                # show_message("Turning...")
                 current_dir = abs(sensors["direction"])
                 angle_to_go = op["angle"] * DEG_TO_RAD - current_dir  # type: ignore
 
-                if angle_to_go <= 0:
+                if angle_to_go <= 20 * DEG_TO_RAD:
                     break
 
                 if op.get("smooth", False):
-                    val = 350 + 600 * angle_to_go**2
+                    val = 400 + 600 * angle_to_go**2
                     val = min(val, op["value"])
                 else:
                     val = op["value"]
@@ -314,12 +301,14 @@ def run():
 
     show_message("Running...")
     k = 0
-    dLdt = 0
-    last_lidar = LIDAR.ping()
+    acceleration = [0, 0, 0]
     ticks = time.ticks_us()
-    last_lidar_ticks = ticks
     while True:
-        acceleration = with_offset(MOTION.acceleration, gravity)
+        acceleration = [
+            a_prev * .5 + a * .5
+            for a_prev, a in
+            zip(acceleration, with_offset(MOTION.acceleration, gravity))
+        ]
         gyro = with_offset(MOTION.gyro, gyro_offset)
         lidar = LIDAR.ping()
         current_ticks = time.ticks_us()
@@ -333,14 +322,6 @@ def run():
         omega = dot(gyro, gravity_unit)
         direction(omega, step)
 
-        # dL/dt
-        if k % 10 == 9:  # reduce frequency to avoid the effect of noise
-            dLdt = (lidar - last_lidar) / (
-                time.ticks_diff(current_ticks, last_lidar_ticks) / 1_000_000
-            )
-            last_lidar = lidar
-            last_lidar_ticks = current_ticks
-
         sensors = {
             "gyro": gyro,
             "omega": omega,
@@ -349,7 +330,6 @@ def run():
             "velocity": eval_vec(velocity),
             "position": eval_vec(position),
             "lidar": lidar,
-            "dL/dt": dLdt,
         }
 
         try:
@@ -360,58 +340,22 @@ def run():
 
         if action == "reset":
             # calibrate sensors
-            time.sleep_ms(500)
+            time.sleep(1)  # wait for the robot to stop moving
             gravity, gyro_offset = calibrate(
                 lambda: MOTION.acceleration,
                 lambda: MOTION.gyro,
             )
             gravity_unit = normalize(gravity)
 
-            # reset integrals
+            # reset
             for i in range(3):
+                acceleration = [0, 0, 0]
                 velocity[i](reset=True)
                 position[i](reset=True)
             direction(reset=True)
         else:
             print(*action)
             run_motor(*action)
-
-        if False and k % 10 == 0:
-            alpha = 0.85 * alpha + (2 * direction() + 1.5 * omega)
-            run_motor(800 - alpha, 800 + alpha)
-            DISPLAY.fill(0)
-            DISPLAY.text(str(alpha), 0, 0, 1)
-            DISPLAY.show()
-            # print(alpha)
-
-        if k % 20 == 0 and False:
-            # print(step)
-            DISPLAY.fill(0)
-            DISPLAY.text("Position:", 0, 0, 1)
-            DISPLAY.text(
-                "{:.1f} {:.1f} {:.1f}".format(*(pos() for pos in position)), 0, 8, 1
-            )
-            DISPLAY.text("Direction:", 0, 16, 1)
-            DISPLAY.text("{:.1f}".format(direction()), 0, 24, 1)
-            DISPLAY.text("Sensor data:", 0, 32, 1)
-            DISPLAY.text(
-                "a {:.1f} {:.1f} {:.1f}".format(*acceleration),
-                0,
-                40,
-                1,
-            )
-            DISPLAY.text("r {:.1f} {:.1f} {:.1f}".format(*MOTION.gyro), 0, 48, 1)
-            # DISPLAY.text("m {:.1f} {:.1f} {:.1f}".format(*MOTION.magnetic), 0, 40, 1)
-            # DISPLAY.text("dist. = {:.1f}".format(LIDAR.ping()), 0, 48, 1)
-
-            DISPLAY.show()
-
-        if k % 20 == 0:
-            DISPLAY.fill(0)
-            DISPLAY.text(str(lidar), 0, 0, 1)
-            DISPLAY.text(str(int(sensors["direction"] / DEG_TO_RAD)), 0, 8, 1)
-            DISPLAY.text(str(int(_calc_angle_lidar(sensors) / DEG_TO_RAD)), 0, 16, 1)
-            DISPLAY.show()
 
         k += 1
         ticks = current_ticks
