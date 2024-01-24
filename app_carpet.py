@@ -14,7 +14,7 @@ from vl53l0x import VL53L0X
 from ssd1306 import SSD1306_I2C
 
 
-ACTIONS = "BRLFLR"
+ACTIONS = "FRLFLR"
 
 DEG_TO_RAD = math.pi / 180
 
@@ -94,7 +94,7 @@ def with_offset(values, offset):
     return [(values[i] - offset[i]) for i in range(3)]
 
 
-def calibrate(*funcs, n=60):
+def calibrate(*funcs, n=50):
     offsets = [[0.0, 0.0, 0.0] for _ in range(len(funcs))]
     for _ in range(n):
         for i, func in enumerate(funcs):
@@ -166,12 +166,8 @@ def _actions_to_ir(actions):
 
         if action == "F":
             yield {"op": "reset"}
-            # yield {"op": "transition", "start": 500, "stop": 800, "step": 15}
-            yield {"op": "forward", "value": 1023, "distance": j * 0.25, "smooth": True}
-            yield {"op": "stop"}
-        elif action == "B":
-            yield {"op": "reset"}
-            yield {"op": "forward", "value": -1023, "distance": j * 0.25, "smooth": True}
+            yield {"op": "transition", "start": 500, "stop": 800, "step": 15}
+            yield {"op": "forward", "value": 800, "distance": j * 0.24, "smooth": True}
             yield {"op": "stop"}
         elif action == "T":
             yield {"op": "reset"}
@@ -181,24 +177,24 @@ def _actions_to_ir(actions):
             yield {
                 "op": "turn",
                 "direction": "ccw",
-                "value": 1000,
+                "value": 800,
                 "angle": 10 * j,
             }  # get the turn started
             yield {
                 "op": "turn",
                 "direction": "ccw",
-                "value": 1000,
+                "value": 600,
                 "angle": 90 * j,
                 "smooth": True,
             }  # turn the rest of the way
             yield {"op": "stop"}
         elif action == "R":
             yield {"op": "reset"}
-            yield {"op": "turn", "direction": "cw", "value": 1000, "angle": 10 * j}
+            yield {"op": "turn", "direction": "cw", "value": 800, "angle": 10 * j}
             yield {
                 "op": "turn",
                 "direction": "cw",
-                "value": 1000,
+                "value": 600,
                 "angle": 90 * j,
                 "smooth": True,
             }
@@ -214,7 +210,7 @@ def _actions_to_ir(actions):
 
 def _calc_forward_offset(offset, sensors):
     """Returns the offset for forward motion (go in a straight line)"""
-    return 0.9 * offset + (100 * sensors["direction"] + 100 * sensors["omega"])
+    return 0.85 * offset + (150 * sensors["direction"] + 150 * sensors["omega"])
 
 
 def parse_actions(actions):
@@ -229,8 +225,6 @@ def parse_actions(actions):
                 sensors = yield (val - offset, val + offset)
 
         elif op["op"] == "forward":
-            show_message(f"fw {op['value']:d}")
-            sign = 1 if op["value"] >= 0 else -1  # type: ignore
             for _ in range(500):  # timeout after 5 seconds
                 current_pos = norm(sensors["position"])
                 dist_to_go = op["distance"] - current_pos  # type: ignore
@@ -243,31 +237,24 @@ def parse_actions(actions):
 
                 if op.get("smooth", False):
                     val = 500 + 7500 * dist_to_go**2
-                    val = min(val, op["value"] * sign)
+                    val = min(val, op["value"])
                 else:
-                    val = op["value"] * sign
+                    val = op["value"]
 
                 offset = _calc_forward_offset(offset, sensors)
-                sensors = yield (val * sign - offset, val * sign + offset)
+                sensors = yield (val - offset, val + offset)
 
         elif op["op"] == "turn":
-            show_message(op["direction"])
             for _ in range(500):  # timeout after 5 seconds
                 # show_message("Turning...")
                 current_dir = abs(sensors["direction"])
                 angle_to_go = op["angle"] * DEG_TO_RAD - current_dir  # type: ignore
 
-                if angle_to_go <= 10 * DEG_TO_RAD and abs(sensors["omega"]) < .01:
-                    break
-
-                if angle_to_go <= 1 * DEG_TO_RAD:
+                if angle_to_go <= 2 * DEG_TO_RAD:
                     break
 
                 if op.get("smooth", False):
-                    if op["direction"] == "cw":
-                        val = 500 + 700 * angle_to_go**2
-                    else:
-                        val = 500 + 700 * angle_to_go**2
+                    val = 230 + 600 * angle_to_go**2
                     val = min(val, op["value"])
                 else:
                     val = op["value"]
@@ -282,7 +269,6 @@ def parse_actions(actions):
             sensors = yield "reset"
 
         elif op["op"] == "stop":
-            show_message("stop")
             sensors = yield (0, 0)
 
 
@@ -308,7 +294,7 @@ def run():
         lidar = LIDAR.ping()
         show_message(str(lidar))
 
-        if lidar < 50:
+        if lidar < 40:
             break
         time.sleep_ms(500)
 
@@ -357,7 +343,7 @@ def run():
 
         if action == "reset":
             # calibrate sensors
-            time.sleep(.7)  # wait for the robot to stop moving
+            time.sleep(1)  # wait for the robot to stop moving
             gravity, gyro_offset = calibrate(
                 lambda: MOTION.acceleration,
                 lambda: MOTION.gyro,
@@ -371,7 +357,7 @@ def run():
                 position[i](reset=True)
             direction(reset=True)
         else:
-            # show_message(f"{action[0]:.1f}, {action[1]:.1f}")
+            print(*action)
             run_motor(*action)
 
         k += 1
