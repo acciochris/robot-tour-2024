@@ -18,7 +18,7 @@ ACTIONS = "BRLFLR"
 
 DEG_TO_RAD = math.pi / 180
 
-I2C_CONFIG = I2C(sda=Pin(4), scl=Pin(5))
+I2C_CONFIG = I2C(sda=Pin(21), scl=Pin(22))
 DISPLAY = SSD1306_I2C(128, 64, I2C_CONFIG)
 
 
@@ -44,10 +44,10 @@ except Exception:
 # LIDAR = VL53L0X(I2C_CONFIG)
 
 MOTOR = [
-    PWM(Pin(0)),
-    PWM(Pin(2)),
-    PWM(Pin(13)),
-    PWM(Pin(15)),
+    PWM(Pin(16, drive=Pin.DRIVE_3)),
+    PWM(Pin(17, drive=Pin.DRIVE_3)),
+    PWM(Pin(18, drive=Pin.DRIVE_3)),
+    PWM(Pin(19, drive=Pin.DRIVE_3)),
 ]
 
 
