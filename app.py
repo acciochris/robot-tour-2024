@@ -2,9 +2,10 @@
 # To minify, execute `pyminify app.py -o app.min.py --remove-literal-statements --rename-globals --preserve-globals run`
 
 # Micropython
-from machine import I2C, Pin, PWM
+from machine import SoftI2C, Pin, PWM
 import time
 import math
+import machine
 
 # Sensors
 from mpu9250 import MPU9250
@@ -14,11 +15,11 @@ from vl53l0x import VL53L0X
 from ssd1306 import SSD1306_I2C
 
 
-ACTIONS = "BRLFLR"
+ACTIONS = "FFFF"
 
 DEG_TO_RAD = math.pi / 180
 
-I2C_CONFIG = I2C(sda=Pin(21), scl=Pin(22))
+I2C_CONFIG = SoftI2C(sda=Pin(21), scl=Pin(22))
 DISPLAY = SSD1306_I2C(128, 64, I2C_CONFIG)
 
 
@@ -49,6 +50,20 @@ MOTOR = [
     PWM(Pin(18, drive=Pin.DRIVE_3)),
     PWM(Pin(19, drive=Pin.DRIVE_3)),
 ]
+
+### Encoders
+ENC1 = Pin(32, Pin.IN)  # right
+ENC2 = Pin(33, Pin.IN)  # left
+enc1 = 0
+enc2 = 0
+
+def handler1(_pin):
+    global enc1
+    enc1 += 1
+
+def handler2(_pin):
+    global enc2
+    enc2 += 1
 
 
 ### Utilities
@@ -167,11 +182,11 @@ def _actions_to_ir(actions):
         if action == "F":
             yield {"op": "reset"}
             # yield {"op": "transition", "start": 500, "stop": 800, "step": 15}
-            yield {"op": "forward", "value": 1023, "distance": j * 0.25, "smooth": True}
+            yield {"op": "forward", "value": 1023, "distance": j * 0.25, "smooth": False}
             yield {"op": "stop"}
         elif action == "B":
             yield {"op": "reset"}
-            yield {"op": "forward", "value": -1023, "distance": j * 0.25, "smooth": True}
+            yield {"op": "forward", "value": -1023, "distance": j * 0.25, "smooth": False}
             yield {"op": "stop"}
         elif action == "T":
             yield {"op": "reset"}
@@ -215,6 +230,8 @@ def _actions_to_ir(actions):
 def _calc_forward_offset(offset, sensors):
     """Returns the offset for forward motion (go in a straight line)"""
     return 0.9 * offset + (100 * sensors["direction"] + 100 * sensors["omega"])
+    # encoder_delta = sensors["encoder"][0] - sensors["encoder"][1]
+    # return offset * 0.95 + encoder_delta * 4
 
 
 def parse_actions(actions):
@@ -232,11 +249,13 @@ def parse_actions(actions):
             show_message(f"fw {op['value']:d}")
             sign = 1 if op["value"] >= 0 else -1  # type: ignore
             for _ in range(500):  # timeout after 5 seconds
-                current_pos = norm(sensors["position"])
+                current_pos = (
+                    sensors["encoder"][0] + sensors["encoder"][1]
+                ) / 360
                 dist_to_go = op["distance"] - current_pos  # type: ignore
 
                 if sensors["lidar"] <= 500:
-                    dist_to_go = min(dist_to_go, sensors["lidar"] - 250)
+                    dist_to_go = min(dist_to_go, (sensors["lidar"] - 250) / 1000)
 
                 if dist_to_go <= 0:
                     break
@@ -287,6 +306,8 @@ def parse_actions(actions):
 
 
 def run():
+    global enc1, enc2
+
     gravity, gyro_offset = calibrate(
         lambda: MOTION.acceleration,
         lambda: MOTION.gyro,
@@ -317,6 +338,8 @@ def run():
         time.sleep(1)
 
     show_message("Running...")
+    ENC1.irq(handler1, Pin.IRQ_RISING | Pin.IRQ_FALLING)
+    ENC2.irq(handler2, Pin.IRQ_RISING | Pin.IRQ_FALLING)
     k = 0
     acceleration = [0, 0, 0]
     ticks = time.ticks_us()
@@ -347,6 +370,7 @@ def run():
             "velocity": eval_vec(velocity),
             "position": eval_vec(position),
             "lidar": lidar,
+            "encoder": (enc1, enc2),
         }
 
         try:
@@ -370,6 +394,12 @@ def run():
                 velocity[i](reset=True)
                 position[i](reset=True)
             direction(reset=True)
+
+            # reset encoders
+            irq = machine.disable_irq()
+            enc1 = 0
+            enc2 = 0
+            machine.enable_irq(irq)
         else:
             # show_message(f"{action[0]:.1f}, {action[1]:.1f}")
             run_motor(*action)
