@@ -15,7 +15,7 @@ from vl53l0x import VL53L0X
 from ssd1306 import SSD1306_I2C
 
 
-ACTIONS = "FFFF"
+ACTIONS = "FLRBRL"
 
 DEG_TO_RAD = math.pi / 180
 
@@ -182,11 +182,11 @@ def _actions_to_ir(actions):
         if action == "F":
             yield {"op": "reset"}
             # yield {"op": "transition", "start": 500, "stop": 800, "step": 15}
-            yield {"op": "forward", "value": 1023, "distance": j * 0.25, "smooth": False}
+            yield {"op": "forward", "value": 800, "distance": j * 0.25, "smooth": False}
             yield {"op": "stop"}
         elif action == "B":
             yield {"op": "reset"}
-            yield {"op": "forward", "value": -1023, "distance": j * 0.25, "smooth": False}
+            yield {"op": "forward", "value": -800, "distance": j * 0.25, "smooth": False}
             yield {"op": "stop"}
         elif action == "T":
             yield {"op": "reset"}
@@ -202,7 +202,7 @@ def _actions_to_ir(actions):
             yield {
                 "op": "turn",
                 "direction": "ccw",
-                "value": 1000,
+                "value": 800,
                 "angle": 90 * j,
                 "smooth": True,
             }  # turn the rest of the way
@@ -213,7 +213,7 @@ def _actions_to_ir(actions):
             yield {
                 "op": "turn",
                 "direction": "cw",
-                "value": 1000,
+                "value": 800,
                 "angle": 90 * j,
                 "smooth": True,
             }
@@ -261,7 +261,7 @@ def parse_actions(actions):
                     break
 
                 if op.get("smooth", False):
-                    val = 500 + 7500 * dist_to_go**2
+                    val = 300 + 7500 * dist_to_go**2
                     val = min(val, op["value"] * sign)
                 else:
                     val = op["value"] * sign
@@ -284,9 +284,9 @@ def parse_actions(actions):
 
                 if op.get("smooth", False):
                     if op["direction"] == "cw":
-                        val = 500 + 700 * angle_to_go**2
+                        val = 550 + 400 * angle_to_go**2
                     else:
-                        val = 500 + 700 * angle_to_go**2
+                        val = 550 + 400 * angle_to_go**2
                     val = min(val, op["value"])
                 else:
                     val = op["value"]
