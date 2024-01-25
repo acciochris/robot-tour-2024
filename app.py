@@ -182,11 +182,11 @@ def _actions_to_ir(actions):
         if action == "F":
             yield {"op": "reset"}
             # yield {"op": "transition", "start": 500, "stop": 800, "step": 15}
-            yield {"op": "forward", "value": 800, "distance": j * 0.25, "smooth": False}
+            yield {"op": "forward", "value": 800, "distance": j * 0.25, "smooth": True}
             yield {"op": "stop"}
         elif action == "B":
             yield {"op": "reset"}
-            yield {"op": "forward", "value": -800, "distance": j * 0.25, "smooth": False}
+            yield {"op": "forward", "value": -800, "distance": j * 0.25, "smooth": True}
             yield {"op": "stop"}
         elif action == "T":
             yield {"op": "reset"}
@@ -248,6 +248,7 @@ def parse_actions(actions):
         elif op["op"] == "forward":
             show_message(f"fw {op['value']:d}")
             sign = 1 if op["value"] >= 0 else -1  # type: ignore
+            val = 0
             for _ in range(500):  # timeout after 5 seconds
                 current_pos = (
                     sensors["encoder"][0] + sensors["encoder"][1]
@@ -257,11 +258,13 @@ def parse_actions(actions):
                 if sensors["lidar"] <= 500:
                     dist_to_go = min(dist_to_go, (sensors["lidar"] - 250) / 1000)
 
-                if dist_to_go <= 0:
+                if dist_to_go <= .01:
+                    # spike in the opposite direction to stop
+                    yield (-val * sign / 2, -val * sign / 2)  # type: ignore
                     break
 
                 if op.get("smooth", False):
-                    val = 300 + 7500 * dist_to_go**2
+                    val = 500 + 30_000 * dist_to_go**2
                     val = min(val, op["value"] * sign)
                 else:
                     val = op["value"] * sign
@@ -271,6 +274,7 @@ def parse_actions(actions):
 
         elif op["op"] == "turn":
             show_message(op["direction"])
+            val = 0
             for _ in range(500):  # timeout after 5 seconds
                 # show_message("Turning...")
                 current_dir = abs(sensors["direction"])
@@ -279,14 +283,19 @@ def parse_actions(actions):
                 if angle_to_go <= 10 * DEG_TO_RAD and abs(sensors["omega"]) < .01:
                     break
 
-                if angle_to_go <= 1 * DEG_TO_RAD:
+                if angle_to_go <= 4 * DEG_TO_RAD:
+                    # stop things by spiking in the opposite direction
+                    if op["direction"] == "ccw":
+                        sensors = yield (-val / 2, val / 2)  # type: ignore
+                    elif op["direction"] == "cw":
+                        sensors = yield (val / 2, -val / 2)  # type: ignore
                     break
 
                 if op.get("smooth", False):
                     if op["direction"] == "cw":
-                        val = 550 + 400 * angle_to_go**2
+                        val = 550 + 600 * angle_to_go**2
                     else:
-                        val = 550 + 400 * angle_to_go**2
+                        val = 550 + 600 * angle_to_go**2
                     val = min(val, op["value"])
                 else:
                     val = op["value"]
