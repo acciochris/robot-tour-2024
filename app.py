@@ -188,6 +188,14 @@ def _actions_to_ir(actions):
             yield {"op": "reset"}
             yield {"op": "forward", "value": -800, "distance": j * 0.25, "smooth": True}
             yield {"op": "stop"}
+        elif action == "^":
+            yield {"op": "reset"}
+            yield {"op": "forward", "value": 800, "distance": 0.33, "smooth": True}
+            yield {"op": "stop"}
+        elif action == "$":
+            yield {"op": "reset"}
+            yield {"op": "forward", "value": 800, "distance": 0.17, "smooth": True}
+            yield {"op": "stop"}
         elif action == "L":
             yield {"op": "reset"}
             yield {
@@ -237,12 +245,12 @@ def parse_actions(actions):
     offset = 0
     sensors = yield (0, 0)
     for op in ir:
-        if op["op"] == "transition":
-            for val in range(op["start"], op["stop"], op["step"]):  # type: ignore
-                offset = _calc_forward_offset(offset, sensors)
-                sensors = yield (val - offset, val + offset)
+        # if op["op"] == "transition":
+        #     for val in range(op["start"], op["stop"], op["step"]):  # type: ignore
+        #         offset = _calc_forward_offset(offset, sensors)
+        #         sensors = yield (val - offset, val + offset)
 
-        elif op["op"] == "forward":
+        if op["op"] == "forward":
             show_message(f"fw {op['value']:d}")
             sign = 1 if op["value"] >= 0 else -1  # type: ignore
             val = 0
@@ -253,7 +261,7 @@ def parse_actions(actions):
                 dist_to_go = op["distance"] - current_pos  # type: ignore
 
                 if sensors["lidar"] <= 500:
-                    dist_to_go = min(dist_to_go, (sensors["lidar"] - 250) / 1000)
+                    dist_to_go = min(dist_to_go, (sensors["lidar"] - 200) / 1000)
 
                 if dist_to_go <= .01:
                     # spike in the opposite direction to stop
