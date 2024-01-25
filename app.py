@@ -15,7 +15,7 @@ from vl53l0x import VL53L0X
 from ssd1306 import SSD1306_I2C
 
 
-ACTIONS = "FLRBRL"
+ACTIONS = "FFFF"
 
 DEG_TO_RAD = math.pi / 180
 
@@ -188,9 +188,6 @@ def _actions_to_ir(actions):
             yield {"op": "reset"}
             yield {"op": "forward", "value": -800, "distance": j * 0.25, "smooth": True}
             yield {"op": "stop"}
-        elif action == "T":
-            yield {"op": "reset"}
-            yield {"op": "forward", "value": 300, "distance": 1}
         elif action == "L":
             yield {"op": "reset"}
             yield {
