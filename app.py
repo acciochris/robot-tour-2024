@@ -15,7 +15,7 @@ from vl53l0x import VL53L0X
 from ssd1306 import SSD1306_I2C
 
 
-ACTIONS = "FFFF"
+ACTIONS = "^RFFLFFLFFRFFRFFLFFLFFFFF$"
 
 DEG_TO_RAD = math.pi / 180
 
@@ -198,12 +198,12 @@ def _actions_to_ir(actions):
             yield {"op": "stop"}
         elif action == "L":
             yield {"op": "reset"}
-            yield {
-                "op": "turn",
-                "direction": "ccw",
-                "value": 1000,
-                "angle": 10 * j,
-            }  # get the turn started
+            # yield {
+            #     "op": "turn",
+            #     "direction": "ccw",
+            #     "value": 1000,
+            #     "angle": 10 * j,
+            # }  # get the turn started
             yield {
                 "op": "turn",
                 "direction": "ccw",
@@ -214,7 +214,7 @@ def _actions_to_ir(actions):
             yield {"op": "stop"}
         elif action == "R":
             yield {"op": "reset"}
-            yield {"op": "turn", "direction": "cw", "value": 1000, "angle": 10 * j}
+            # yield {"op": "turn", "direction": "cw", "value": 1000, "angle": 10 * j}
             yield {
                 "op": "turn",
                 "direction": "cw",
@@ -257,10 +257,10 @@ def parse_actions(actions):
             for _ in range(500):  # timeout after 5 seconds
                 current_pos = (
                     sensors["encoder"][0] + sensors["encoder"][1]
-                ) / 360
+                ) / 367
                 dist_to_go = op["distance"] - current_pos  # type: ignore
 
-                if sensors["lidar"] <= 500:
+                if sign == 1 and sensors["lidar"] <= 500:
                     dist_to_go = min(dist_to_go, (sensors["lidar"] - 200) / 1000)
 
                 if dist_to_go <= .01:
@@ -288,7 +288,7 @@ def parse_actions(actions):
                 if angle_to_go <= 10 * DEG_TO_RAD and abs(sensors["omega"]) < .01:
                     break
 
-                if angle_to_go <= 4 * DEG_TO_RAD:
+                if angle_to_go <= 7 * DEG_TO_RAD:
                     # stop things by spiking in the opposite direction
                     if op["direction"] == "ccw":
                         sensors = yield (-val / 2, val / 2)  # type: ignore
@@ -298,9 +298,9 @@ def parse_actions(actions):
 
                 if op.get("smooth", False):
                     if op["direction"] == "cw":
-                        val = 550 + 600 * angle_to_go**2
+                        val = 520 + 600 * angle_to_go**2
                     else:
-                        val = 550 + 600 * angle_to_go**2
+                        val = 520 + 600 * angle_to_go**2
                     val = min(val, op["value"])
                 else:
                     val = op["value"]
