@@ -15,7 +15,7 @@ from vl53l0x import VL53L0X
 from ssd1306 import SSD1306_I2C
 
 
-ACTIONS = "^RFFLFFLFFRFFRFFLFFLFFFFF$"
+ACTIONS = "^LFFRFFLFFLFFRRFFFFFFLLFFFFLFFFFLFFRFFLFFLLFFRFFFFRF$"
 
 DEG_TO_RAD = math.pi / 180
 
@@ -57,9 +57,11 @@ ENC2 = Pin(33, Pin.IN)  # left
 enc1 = 0
 enc2 = 0
 
+
 def handler1(_pin):
     global enc1
     enc1 += 1
+
 
 def handler2(_pin):
     global enc2
@@ -109,7 +111,7 @@ def with_offset(values, offset):
     return [(values[i] - offset[i]) for i in range(3)]
 
 
-def calibrate(*funcs, n=60):
+def calibrate(*funcs, n=15):
     offsets = [[0.0, 0.0, 0.0] for _ in range(len(funcs))]
     for _ in range(n):
         for i, func in enumerate(funcs):
@@ -117,7 +119,7 @@ def calibrate(*funcs, n=60):
             offsets[i][0] += x
             offsets[i][1] += y
             offsets[i][2] += z
-        time.sleep_ms(20)
+        time.sleep_ms(10)
     for offset in offsets:
         offset[0] /= n
         offset[1] /= n
@@ -182,19 +184,19 @@ def _actions_to_ir(actions):
         if action == "F":
             yield {"op": "reset"}
             # yield {"op": "transition", "start": 500, "stop": 800, "step": 15}
-            yield {"op": "forward", "value": 800, "distance": j * 0.25, "smooth": True}
+            yield {"op": "forward", "value": 1023, "distance": j * 0.25, "smooth": True}
             yield {"op": "stop"}
         elif action == "B":
             yield {"op": "reset"}
-            yield {"op": "forward", "value": -800, "distance": j * 0.25, "smooth": True}
+            yield {"op": "forward", "value": -1023, "distance": j * 0.25, "smooth": True}
             yield {"op": "stop"}
         elif action == "^":
             yield {"op": "reset"}
-            yield {"op": "forward", "value": 800, "distance": 0.33, "smooth": True}
+            yield {"op": "forward", "value": 1023, "distance": 0.33, "smooth": True}
             yield {"op": "stop"}
         elif action == "$":
             yield {"op": "reset"}
-            yield {"op": "forward", "value": 800, "distance": 0.17, "smooth": True}
+            yield {"op": "forward", "value": 1023, "distance": 0.22, "smooth": True}
             yield {"op": "stop"}
         elif action == "L":
             yield {"op": "reset"}
@@ -207,7 +209,7 @@ def _actions_to_ir(actions):
             yield {
                 "op": "turn",
                 "direction": "ccw",
-                "value": 800,
+                "value": 1023,
                 "angle": 90 * j,
                 "smooth": True,
             }  # turn the rest of the way
@@ -218,7 +220,7 @@ def _actions_to_ir(actions):
             yield {
                 "op": "turn",
                 "direction": "cw",
-                "value": 800,
+                "value": 1023,
                 "angle": 90 * j,
                 "smooth": True,
             }
@@ -255,15 +257,13 @@ def parse_actions(actions):
             sign = 1 if op["value"] >= 0 else -1  # type: ignore
             val = 0
             for _ in range(500):  # timeout after 5 seconds
-                current_pos = (
-                    sensors["encoder"][0] + sensors["encoder"][1]
-                ) / 367
+                current_pos = (sensors["encoder"][0] + sensors["encoder"][1]) / 352
                 dist_to_go = op["distance"] - current_pos  # type: ignore
 
-                if sign == 1 and sensors["lidar"] <= 500:
-                    dist_to_go = min(dist_to_go, (sensors["lidar"] - 200) / 1000)
+                # if sign == 1 and sensors["lidar"] <= 500:
+                #     dist_to_go = min(dist_to_go, (sensors["lidar"] - 200) / 1000)
 
-                if dist_to_go <= .01:
+                if dist_to_go <= 0.01:
                     # spike in the opposite direction to stop
                     yield (-val * sign / 2, -val * sign / 2)  # type: ignore
                     break
@@ -285,10 +285,12 @@ def parse_actions(actions):
                 current_dir = abs(sensors["direction"])
                 angle_to_go = op["angle"] * DEG_TO_RAD - current_dir  # type: ignore
 
-                if angle_to_go <= 10 * DEG_TO_RAD and abs(sensors["omega"]) < .01:
+                if angle_to_go <= 10 * DEG_TO_RAD and abs(sensors["omega"]) < 0.01:
                     break
 
-                if angle_to_go <= 7 * DEG_TO_RAD:
+                if (op["direction"] == "cw" and angle_to_go <= 8 * DEG_TO_RAD) or (
+                    op["direction"] == "ccw" and angle_to_go <= 4 * DEG_TO_RAD
+                ):
                     # stop things by spiking in the opposite direction
                     if op["direction"] == "ccw":
                         sensors = yield (-val / 2, val / 2)  # type: ignore
@@ -297,10 +299,11 @@ def parse_actions(actions):
                     break
 
                 if op.get("smooth", False):
-                    if op["direction"] == "cw":
-                        val = 520 + 600 * angle_to_go**2
-                    else:
-                        val = 520 + 600 * angle_to_go**2
+                    # if op["direction"] == "cw":
+                    #     val = 520 + 600 * angle_to_go**2
+                    # else:
+                    #     val = 520 + 600 * angle_to_go**2
+                    val = 520 + 600 * angle_to_go**2
                     val = min(val, op["value"])
                 else:
                     val = op["value"]
@@ -359,9 +362,10 @@ def run():
     ticks = time.ticks_us()
     while True:
         acceleration = [
-            a_prev * .5 + a * .5
-            for a_prev, a in
-            zip(acceleration, with_offset(MOTION.acceleration, gravity))
+            a_prev * 0.5 + a * 0.5
+            for a_prev, a in zip(
+                acceleration, with_offset(MOTION.acceleration, gravity)
+            )
         ]
         gyro = with_offset(MOTION.gyro, gyro_offset)
         lidar = LIDAR.ping()
@@ -395,7 +399,7 @@ def run():
 
         if action == "reset":
             # calibrate sensors
-            time.sleep(.7)  # wait for the robot to stop moving
+            time.sleep(0.15)  # wait for the robot to stop moving
             gravity, gyro_offset = calibrate(
                 lambda: MOTION.acceleration,
                 lambda: MOTION.gyro,
