@@ -15,7 +15,8 @@ from vl53l0x import VL53L0X
 from ssd1306 import SSD1306_I2C
 
 
-ACTIONS = "^LFFRFFLFFLFFRRFFFFFFLLFFFFLFFFFLFFRFFLFFLLFFRFFFFRF$"
+# ACTIONS = "^LFFRFFLFFLFFRRFFFFFFLLFFFFLFFFFLFFRFFLFFLLFFRFFFFRF$"
+ACTIONS = "LPLPLPRPRPRPLLPLLPLLPRRPRRPRRP"
 
 DEG_TO_RAD = math.pi / 180
 
@@ -257,7 +258,7 @@ def parse_actions(actions):
             sign = 1 if op["value"] >= 0 else -1  # type: ignore
             val = 0
             for _ in range(500):  # timeout after 5 seconds
-                current_pos = (sensors["encoder"][0] + sensors["encoder"][1]) / 352
+                current_pos = (sensors["encoder"][0] + sensors["encoder"][1]) / 360 
                 dist_to_go = op["distance"] - current_pos  # type: ignore
 
                 # if sign == 1 and sensors["lidar"] <= 500:
@@ -289,7 +290,7 @@ def parse_actions(actions):
                     break
 
                 if (op["direction"] == "cw" and angle_to_go <= 8 * DEG_TO_RAD) or (
-                    op["direction"] == "ccw" and angle_to_go <= 4 * DEG_TO_RAD
+                    op["direction"] == "ccw" and angle_to_go <= 6 * DEG_TO_RAD
                 ):
                     # stop things by spiking in the opposite direction
                     if op["direction"] == "ccw":
